@@ -34,6 +34,18 @@ export const VARIABLES_INFO = {
     chartTitle: 'Sensor de Lluvia',
     color: 'cyan'
   },
+  foco: {
+    label: 'Foco',
+    unit: '',
+    chartTitle: 'Estado del Foco',
+    color: 'yellow'
+  },
+  ventilador: {
+    label: 'Ventilador',
+    unit: '',
+    chartTitle: 'Estado del Ventilador',
+    color: 'lightblue'
+  },
   
   // Variables para el esclavo 2 (Control de Humedad)
   humedad_inv1: {
@@ -79,21 +91,25 @@ export const ESCLAVOS_INFO = {
   esclavo1: {
     nombre: 'Invernadero',
     color: '#4CAF50',
-    tipo: 'ambiente', // Para diferenciar el tipo de esclavo
+    tipo: 'ambiente',
     variables: ['temperature', 'humidity', 'pressure', 'light', 'rain_value']
   },
   esclavo2: {
     nombre: 'Control Humedad',
     color: '#2196F3',
-    tipo: 'humedad', // Para diferenciar el tipo de esclavo
+    tipo: 'humedad',
     variables: ['humedad_inv1', 'humedad_inv2', 'nivel_agua']
   },
   esclavo3: {
-    nombre: 'Esclavo 3',
-    color: '#FFC107'
+    nombre: 'Invernadero B',
+    color: '#FFC107',
+    tipo: 'ambiente',
+    variables: ['temperature', 'humidity', 'foco', 'ventilador']
   },
   esclavo4: {
-    nombre: 'Esclavo 4',
-    color: '#9C27B0'
+    nombre: 'Invernadero A',
+    color: '#9C27B0',
+    tipo: 'ambiente',
+    variables: ['temperature', 'humidity', 'foco', 'ventilador']
   }
 };

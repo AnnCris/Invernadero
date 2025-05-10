@@ -8,8 +8,7 @@ import FilterChart from './components/FilterChart';
 import StatusBar from './components/StatusBar';
 import EsclavosOverview from './components/EsclavosOverview';
 import apiService from './services/api';
-import HistoricalData from './models/HistoricalData';
-import { INTERVALO_ACTUALIZACION, ESCLAVOS_INFO } from './utils/constants';
+import { INTERVALO_ACTUALIZACION, ESCLAVOS_INFO, VARIABLES_INFO, FILTER_TYPES } from './utils/constants';
 
 function App() {
   // Estado para los datos
@@ -47,13 +46,20 @@ function App() {
     Object.keys(ESCLAVOS_INFO).forEach(esclavo => {
       initialHistoricalData[esclavo] = {};
       
-      ["temperature", "humidity", "pressure", "light", "rain_value"].forEach(variable => {
-        initialHistoricalData[esclavo][variable] = {
-          "raw": { timestamps: [], values: [] },
-          "kalman": { timestamps: [], values: [] },
-          "median": { timestamps: [], values: [] },
-          "exp": { timestamps: [], values: [] }
-        };
+      // Obtenemos las variables específicas para este esclavo
+      const variables = ESCLAVOS_INFO[esclavo].variables || 
+        // Si no hay variables específicas, usar todas las variables definidas
+        Object.keys(VARIABLES_INFO);
+      
+      variables.forEach(variable => {
+        if (VARIABLES_INFO[variable]) {
+          initialHistoricalData[esclavo][variable] = {
+            "raw": { timestamps: [], values: [] },
+            "kalman": { timestamps: [], values: [] },
+            "median": { timestamps: [], values: [] },
+            "exp": { timestamps: [], values: [] }
+          };
+        }
       });
     });
     
@@ -67,7 +73,7 @@ function App() {
       const result = await apiService.getData();
       
       if (result.success) {
-        console.log("Datos recibidos del ESP32:", result.data);
+        console.log("Datos recibidos:", result.data);
         const timestamp = new Date();
         const newCurrentData = {};
         const newFilterData = {};
@@ -75,91 +81,135 @@ function App() {
         let isAnyEsclavoConnected = false;
         
         // Procesar datos de cada esclavo
-        Object.keys(result.data).forEach(esclavo => {
-          if (ESCLAVOS_INFO[esclavo]) {
-            console.log(`Procesando datos para ${esclavo}:`, result.data[esclavo]);
+        Object.keys(result.data).forEach(esclavoKey => {
+          if (esclavoKey.startsWith('esclavo')) {
+            console.log(`Procesando datos para ${esclavoKey}:`, result.data[esclavoKey]);
             isAnyEsclavoConnected = true;
-            const esclavoData = result.data[esclavo];
+            const esclavoData = result.data[esclavoKey];
             
-            // Extraer valores principales
-            newCurrentData[esclavo] = {
-              temperature: parseFloat(esclavoData.temperature || 0),
-              humidity: parseFloat(esclavoData.humidity || 0),
-              pressure: parseFloat(esclavoData.pressure || 0),
-              light: parseFloat(esclavoData.light || 0),
-              rain: Boolean(esclavoData.rain || false),
-              rain_value: parseFloat(esclavoData.rain_value || 0),
-              window_open: Boolean(esclavoData.window_open || false)
-            };
+            // Inicializar datos para este esclavo si no existen
+            if (!newCurrentData[esclavoKey]) newCurrentData[esclavoKey] = {};
+            if (!newFilterData[esclavoKey]) newFilterData[esclavoKey] = {};
+            if (!newHistoricalData[esclavoKey]) newHistoricalData[esclavoKey] = {};
+            
+            // Asegurarnos de procesar TODOS los campos en esclavoData
+            Object.entries(esclavoData).forEach(([key, value]) => {
+              // No procesar el campo filtros aquí, se hará por separado
+              if (key !== 'filtros') {
+                // Si es un valor numérico, convertirlo
+                if (!isNaN(value) && typeof value !== 'boolean') {
+                  newCurrentData[esclavoKey][key] = parseFloat(value);
+                } else {
+                  newCurrentData[esclavoKey][key] = value;
+                }
+              }
+            });
+            
+            // Extraer explícitamente temperatura y humedad para estar seguros
+            if (esclavoData.temperatura !== undefined) {
+              newCurrentData[esclavoKey].temperature = parseFloat(esclavoData.temperatura);
+            } else if (esclavoData.temperature !== undefined) {
+              newCurrentData[esclavoKey].temperature = parseFloat(esclavoData.temperature);
+            }
+            
+            if (esclavoData.humedad !== undefined) {
+              newCurrentData[esclavoKey].humidity = parseFloat(esclavoData.humedad);
+            } else if (esclavoData.humidity !== undefined) {
+              newCurrentData[esclavoKey].humidity = parseFloat(esclavoData.humidity);
+            }
             
             // Obtener datos de filtros si existen
             if (esclavoData.filtros) {
-              console.log(`Datos de filtros encontrados para ${esclavo}:`, esclavoData.filtros);
-              newFilterData[esclavo] = esclavoData.filtros;
+              console.log(`Datos de filtros encontrados para ${esclavoKey}:`, esclavoData.filtros);
+              newFilterData[esclavoKey] = esclavoData.filtros;
               
-              // Actualizar datos históricos para cada sensor y tipo de filtro
-              ["temperature", "humidity", "pressure", "light", "rain_value"].forEach(variable => {
-                if (variable in esclavoData.filtros) {
-                  const filterValues = esclavoData.filtros[variable];
-                  
-                  // Añadir valores para cada tipo de filtro
-                  ["raw", "kalman", "median", "exp"].forEach(filterType => {
-                    if (filterType in filterValues) {
-                      const value = parseFloat(filterValues[filterType]);
-                      
-                      // Inicializar si no existe
-                      if (!newHistoricalData[esclavo]) newHistoricalData[esclavo] = {};
-                      if (!newHistoricalData[esclavo][variable]) newHistoricalData[esclavo][variable] = {};
-                      if (!newHistoricalData[esclavo][variable][filterType]) {
-                        newHistoricalData[esclavo][variable][filterType] = { 
-                          timestamps: [], 
-                          values: [] 
-                        };
-                      }
-                      
-                      // Clonar arrays para evitar mutación
-                      let timestamps = [...newHistoricalData[esclavo][variable][filterType].timestamps];
-                      let values = [...newHistoricalData[esclavo][variable][filterType].values];
-                      
-                      // Limitar longitud a 100 puntos
-                      if (timestamps.length >= 100) {
-                        timestamps.shift();
-                        values.shift();
-                      }
-                      
-                      timestamps.push(timestamp);
-                      values.push(value);
-                      
-                      newHistoricalData[esclavo][variable][filterType] = {
-                        timestamps,
-                        values
-                      };
-                    }
-                  });
+              // Si hay filtros de temperatura, asegurarnos de que se refleje en currentData
+              if (esclavoData.filtros.temperatura || esclavoData.filtros.temperature) {
+                const tempFilters = esclavoData.filtros.temperatura || esclavoData.filtros.temperature;
+                if (tempFilters.kalman !== undefined) {
+                  newCurrentData[esclavoKey].temperature = parseFloat(tempFilters.kalman);
                 }
-              });
-            } else {
-              console.log(`No se encontraron datos de filtros para ${esclavo}. Usando valores principales.`);
-              // Si no hay datos de filtros, usar los valores principales
-              ["temperature", "humidity", "pressure", "light", "rain_value"].forEach(variable => {
-                if (variable in newCurrentData[esclavo]) {
-                  const value = newCurrentData[esclavo][variable];
-                  
-                  // Añadir el mismo valor para todos los tipos de filtro
-                  ["raw", "kalman", "median", "exp"].forEach(filterType => {
-                    // Inicializar si no existe
-                    if (!newHistoricalData[esclavo]) newHistoricalData[esclavo] = {};
-                    if (!newHistoricalData[esclavo][variable]) newHistoricalData[esclavo][variable] = {};
-                    if (!newHistoricalData[esclavo][variable][filterType]) {
-                      newHistoricalData[esclavo][variable][filterType] = { 
+              }
+              
+              // Si hay filtros de humedad, asegurarnos de que se refleje en currentData
+              if (esclavoData.filtros.humedad || esclavoData.filtros.humidity) {
+                const humFilters = esclavoData.filtros.humedad || esclavoData.filtros.humidity;
+                if (humFilters.kalman !== undefined) {
+                  newCurrentData[esclavoKey].humidity = parseFloat(humFilters.kalman);
+                }
+              }
+              
+              // Procesar cada variable con filtros
+              Object.entries(esclavoData.filtros).forEach(([variable, filterValues]) => {
+                // Normalizar nombres de variables
+                let normalizedVariable = variable;
+                if (variable === 'temperatura') normalizedVariable = 'temperature';
+                if (variable === 'humedad') normalizedVariable = 'humidity';
+                
+                // Inicializar la variable en historicalData si no existe
+                if (!newHistoricalData[esclavoKey][normalizedVariable]) {
+                  newHistoricalData[esclavoKey][normalizedVariable] = {};
+                }
+                
+                // Procesar cada tipo de filtro
+                Object.entries(filterValues).forEach(([filterType, value]) => {
+                  if (FILTER_TYPES[filterType]) {
+                    const numValue = parseFloat(value);
+                    
+                    // Inicializar el filtro si no existe
+                    if (!newHistoricalData[esclavoKey][normalizedVariable][filterType]) {
+                      newHistoricalData[esclavoKey][normalizedVariable][filterType] = { 
                         timestamps: [], 
                         values: [] 
                       };
                     }
                     
                     // Clonar arrays para evitar mutación
-                    let timestamps = [...newHistoricalData[esclavo][variable][filterType].timestamps];
-                    let values = [...newHistoricalData[esclavo][variable][filterType].values];
+                    let timestamps = [...newHistoricalData[esclavoKey][normalizedVariable][filterType].timestamps];
+                    let values = [...newHistoricalData[esclavoKey][normalizedVariable][filterType].values];
+                    
+                    // Limitar longitud a 100 puntos
+                    if (timestamps.length >= 100) {
+                      timestamps.shift();
+                      values.shift();
+                    }
+                    
+                    timestamps.push(timestamp);
+                    values.push(numValue);
+                    
+                    newHistoricalData[esclavoKey][normalizedVariable][filterType] = {
+                      timestamps,
+                      values
+                    };
+                  }
+                });
+              });
+            } else {
+              // Si no hay datos filtrados, usar los valores directos para variables numéricas
+              Object.entries(newCurrentData[esclavoKey]).forEach(([variable, value]) => {
+                if (typeof value === 'number' && !isNaN(value)) {
+                  // Normalizar nombres de variables
+                  let normalizedVariable = variable;
+                  if (variable === 'temperatura') normalizedVariable = 'temperature';
+                  if (variable === 'humedad') normalizedVariable = 'humidity';
+                  
+                  // Inicializar la variable en historicalData si no existe
+                  if (!newHistoricalData[esclavoKey][normalizedVariable]) {
+                    newHistoricalData[esclavoKey][normalizedVariable] = {};
+                  }
+                  
+                  // Para cada tipo de filtro, usar el mismo valor
+                  Object.keys(FILTER_TYPES).forEach(filterType => {
+                    if (!newHistoricalData[esclavoKey][normalizedVariable][filterType]) {
+                      newHistoricalData[esclavoKey][normalizedVariable][filterType] = { 
+                        timestamps: [], 
+                        values: [] 
+                      };
+                    }
+                    
+                    // Clonar arrays para evitar mutación
+                    let timestamps = [...newHistoricalData[esclavoKey][normalizedVariable][filterType].timestamps];
+                    let values = [...newHistoricalData[esclavoKey][normalizedVariable][filterType].values];
                     
                     // Limitar longitud a 100 puntos
                     if (timestamps.length >= 100) {
@@ -170,7 +220,7 @@ function App() {
                     timestamps.push(timestamp);
                     values.push(value);
                     
-                    newHistoricalData[esclavo][variable][filterType] = {
+                    newHistoricalData[esclavoKey][normalizedVariable][filterType] = {
                       timestamps,
                       values
                     };
@@ -181,20 +231,11 @@ function App() {
           }
         });
         
-        console.log("Datos procesados. Actualizando estado:", {
-          currentData: newCurrentData,
-          filterData: newFilterData,
-          historicalDataLength: Object.keys(newHistoricalData).reduce((acc, esclavo) => {
-            acc[esclavo] = {};
-            Object.keys(newHistoricalData[esclavo] || {}).forEach(variable => {
-              acc[esclavo][variable] = {};
-              Object.keys(newHistoricalData[esclavo][variable] || {}).forEach(filterType => {
-                acc[esclavo][variable][filterType] = 
-                  newHistoricalData[esclavo][variable][filterType].timestamps.length;
-              });
-            });
-            return acc;
-          }, {})
+        console.log("Datos procesados. Esclavos encontrados:", Object.keys(newCurrentData));
+        
+        // Para depuración
+        Object.keys(newCurrentData).forEach(esclavo => {
+          console.log(`${esclavo} procesado - Temperatura: ${newCurrentData[esclavo].temperature}, Humedad: ${newCurrentData[esclavo].humidity}`);
         });
         
         setCurrentData(newCurrentData);
@@ -215,7 +256,7 @@ function App() {
       return false;
     }
   };
-  
+    
   // Obtener status del sistema
   const updateSystemStatus = async () => {
     try {
@@ -318,6 +359,12 @@ function App() {
     setSelectedEsclavo(esclavo);
   };
   
+  // Una actualización manual
+  const handleManualUpdate = () => {
+    updateData();
+    updateSystemStatus();
+  };
+  
   return (
     <div className="App">
       <Navbar bg="dark" variant="dark" expand="lg">
@@ -359,19 +406,24 @@ function App() {
         <StatusBar 
           isConnected={isConnected}
           lastUpdate={lastUpdate}
-          onManualUpdate={updateData}
+          onManualUpdate={handleManualUpdate}
           esclavos={systemStatus.esclavos}
         />
         
         {Object.keys(currentData).length > 0 && (
           <div className="mb-3">
-            <div className="d-flex mb-2">
+            <div className="d-flex flex-wrap mb-2">
               {Object.keys(currentData).map((esclavo) => (
                 <Button
                   key={esclavo}
                   variant={selectedEsclavo === esclavo ? "primary" : "outline-primary"}
                   onClick={() => handleEsclavoChange(esclavo)}
-                  className="me-2"
+                  className="me-2 mb-2"
+                  style={{
+                    backgroundColor: selectedEsclavo === esclavo ? ESCLAVOS_INFO[esclavo]?.color : 'transparent',
+                    borderColor: ESCLAVOS_INFO[esclavo]?.color,
+                    color: selectedEsclavo === esclavo ? 'white' : ESCLAVOS_INFO[esclavo]?.color
+                  }}
                 >
                   {ESCLAVOS_INFO[esclavo]?.nombre || esclavo}
                 </Button>
@@ -390,33 +442,41 @@ function App() {
               currentData={currentData}
               esclavosStatus={systemStatus.esclavos}
             />
-            <Dashboard 
-              currentData={currentData[selectedEsclavo] || {}}
-              historicalData={historicalData[selectedEsclavo] || {}}
-              esclavoId={selectedEsclavo}
-            />
+            {selectedEsclavo && currentData[selectedEsclavo] && (
+              <Dashboard 
+                currentData={currentData[selectedEsclavo] || {}}
+                historicalData={historicalData[selectedEsclavo] || {}}
+                esclavoId={selectedEsclavo}
+              />
+            )}
           </Tab>
           
           <Tab eventKey="dashboard" title="Dashboard">
-            <Dashboard 
-              currentData={currentData[selectedEsclavo] || {}}
-              historicalData={historicalData[selectedEsclavo] || {}}
-              esclavoId={selectedEsclavo}
-            />
+            {selectedEsclavo && currentData[selectedEsclavo] && (
+              <Dashboard 
+                currentData={currentData[selectedEsclavo] || {}}
+                historicalData={historicalData[selectedEsclavo] || {}}
+                esclavoId={selectedEsclavo}
+              />
+            )}
           </Tab>
           
           <Tab eventKey="historical" title="Datos Históricos">
-            <HistoricalChart 
-              historicalData={historicalData[selectedEsclavo] || {}}
-              esclavoId={selectedEsclavo}
-            />
+            {selectedEsclavo && historicalData[selectedEsclavo] && (
+              <HistoricalChart 
+                historicalData={historicalData[selectedEsclavo] || {}}
+                esclavoId={selectedEsclavo}
+              />
+            )}
           </Tab>
           
           <Tab eventKey="filters" title="Filtros">
-            <FilterChart 
-              historicalData={historicalData[selectedEsclavo] || {}}
-              esclavoId={selectedEsclavo}
-            />
+            {selectedEsclavo && historicalData[selectedEsclavo] && (
+              <FilterChart 
+                historicalData={historicalData[selectedEsclavo] || {}}
+                esclavoId={selectedEsclavo}
+              />
+            )}
           </Tab>
         </Tabs>
       </Container>
